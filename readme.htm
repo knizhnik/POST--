@@ -1,0 +1,913 @@
+\<HTML>
+<HEAD>
+<TITLE>Persistent Object Storage for C++</TITLE>
+
+<UL>
+<LI><A HREF = "#introduction">Introduction</A>
+<LI><A HREF = "#classinfo">Describing object class</A>
+<LI><A HREF = "#creation">Allocating and deallocating objects in storage</A>
+<LI><A HREF = "#object">Persistent object protocol</A>
+<LI><A HREF = "#storage::new">Storage constructor</A>
+<LI><A HREF = "#storage::open">Opening storage</A>
+<LI><A HREF = "#installation">Installation of POST++</A>
+<LI><A HREF = "#classes">POST++ class library</A>
+<LI><A HREF = "#stl">Using STL classes with POST++</A>
+<LI><A HREF = "#new">Replacing of standard allocators</A>
+<LI><A HREF = "#usage">How to use POST++</A>
+<LI><A HREF = "#debugging">Specific of debugging POST++ applications</A>
+<LI><A HREF = "#PS">Some more information about POST++</A>
+</UL>
+
+<BODY>
+<HR>
+<H2><A NAME = "introduction">Introduction</A></H2>
+
+<B>POST++</B> provides simple and effective storage for 
+application objects. <B>POST++</B> is based on memory mapping mechanism 
+and shadow pages transactions. <B>POST++</B> eliminates any overhead on 
+persistent objects access.
+Moreover <B>POST++</B> supports work with several storages, 
+storing objects with virtual functions, atomic data file update,
+provides high performance memory allocator and optional garbage collector for
+implicit deallocation of memory. <B>POST++</B> correctly works
+with C++ classes using multiple inheritance and pointers inside 
+objects.<P> 
+
+
+<H2><A NAME = "classinfo">Describing object class</A></H2>
+
+POST++ storage manager needs information about persistent object classes
+to support garbage collection, relocation of references while loading,
+and initialization of pointers to virtual tables. Unfortunately
+C++ language provides no facilities to extract information about class
+format at runtime. As far as I want to avoid use of some special tools
+(preprocessors) or some "dirty trick" solutions (extracting information
+about classes from debugging information), this information should
+be provided to storage manager by programmer. Such class registration
+can be done very easy using special macros provided by POST++.<P>
+
+POST++ uses default constructors for initializing object while loading
+from storage. The programmer should include macro 
+<CODE>CLASSINFO(NAME, FIELD_LIST)</CODE> in definition of any class, which
+instances can be saved in the storage. <CODE>NAME</CODE> corresponds to the 
+name of this class. <CODE>FIELD_LIST</CODE> describes reference fields of this 
+class. There are three macros defined in file 
+<A HREF = "classinfo.h">classinfo.h</A> for describing references:
+
+<DL>
+<DT><CODE>REF(x)</CODE><DD>
+Describes single reference field.
+<DT><CODE>REFS(x)</CODE><DD>
+Describes one-dimensional fixed array of references. 
+(i.e. array with constant boundaries).
+<DT><CODE>VREFS(x)</CODE><DD>
+Describes varying one-dimensional array of references. Varying array can be
+only the last component in class. When you are writing class declaration, you
+specify array with only one element. The actual number of elements in concrete
+object instance is specified at object creation time. 
+</DL><P>
+
+List of these macros should be separates by spaces: 
+<CODE>REF(a) REF(b) REFS(c)</CODE>. 
+Macro <CODE>CLASSINFO</CODE> defines default constructor (constructor without
+parameters) and declares class descriptor of this class. Class descriptor
+is static component of the class with name <CODE>self_class</CODE>. 
+So class descriptor of the class <CODE>foo</CODE> can be accessed by
+<CODE>foo::self_class</CODE>. As far as constructors without arguments
+are called for base classes and components automatically by compiler,
+you should not worry about calling them explicitly. But do not forget
+to include <CLASS>CLASSINFO</CLASS> macro in definition of any structure,
+which can be used as component of serialized class. Then you should
+register your class to be accessible by storage manager. 
+It can be done by macro <CODE>REGISTER(NAME)</CODE>. Class names
+are placed in the storage together with objects. Mapping between application
+and storage classes is established during storage opening. Names of all classes
+stored in the storage are compared with names of application classes.
+If some class name is not found within application classes or 
+correspondent application and storage classes have different size, then 
+program assertion will fail.<P>
+
+
+These rules are illustrated by the following example:
+
+<PRE>
+struct branch { 
+    object* obj;
+    int key;
+
+    CLASSINFO(branch, REF(obj));
+};
+
+class foo : public object { 
+  protected:
+    foo*    next;
+    foo*    prev;
+    object* arr[10];
+    branch  branches[8];
+    int     x;
+    int     y;
+    object* childs[1];
+  public:
+    CLASSINFO(foo, REF(next) REF(prev) REFS(arr) VREFS(linked));
+    foo(int x, int y);
+};
+
+
+REGISTER(1, foo);
+
+main() { 
+    storage my_storage("foo.odb");
+    if (my_storage.open()) { 
+        my_root_class* root = (my_root_class*)my_storage.get_root_object();
+	if (root == NULL) { 
+	    root = new_in(my_storage, my_root)("some parameters for root");
+	}
+	...
+        int n_childs = ...;
+	size_t varying_size = (n_childs-1)*sizeof(object*);
+	// We should subtract 1 from n_childs, because one element is already
+	// present in fixed part of class.
+        foo* fp = new (foo:self_class, my_storage, varying_size) foo(x, y);
+	...
+	my_storage.close();
+    }	
+}
+</PRE><P>
+
+<H2><A NAME = "creation">Allocating and deallocating objects in storage</A></H2>
+
+POST++ provides special memory allocator for managing storage memory.
+This allocator uses two different approaches: for allocating small and
+large objects. All storage memory is divided into pages (which size 
+is independent from operating system page size and in current implementation
+of POST++ is 512 bytes). Small objects are those objects, which
+size is less or equal to 256 bytes (page size/2). These objects are allocated
+using fixed block chains. Each chain contains the list of blocks with the 
+same size. Sizes of allocated objects are aligned at 8-byte
+boundary. The optimal number of fixed block chains for objects with size not 
+greater than 256 is 14 (number of different equipartitions of the page).
+Before each object POST++ allocates object header, which contains
+class identifier of the object and object size. As far as size of header is
+exactly 8 bytes and in C++ size of object is always greater than 0, 
+block chain with size 8 can be eliminated. 
+Allocation and deallocation of small object usually is very fast: 
+it requires only one remove/insert operation from L1 list. 
+If the chain is empty and we are attempting to allocate
+new object, then new page is allocated and used for storing objects of this 
+size (page is divided into the blocks, which are appended to the chain).
+Space for large object (with size greater than 256 bytes) is allocated
+from free page list. Size of large objects is aligned on page boundary.
+POST++ uses first feed, random position algorithm for maintaining list
+of free pages (all free segments of pages are sorted by their address and
+special pointer is used to follow current position in this list).
+Implementation of memory manager can be found in file
+<A HREF = "storage.cxx">storage.cxx</A><P>
+
+If typical size of the objects in your application is slightly larger than 256 bytes, 
+you can build post with <code>LARGE_OBJECTS</code> macro defined. In this case 1024 byte pages
+will be used with 18 block chains. Size of small object will be limited by 512 bytes.<P>
+
+It is up to the programmer whether to use explicit or implicit memory 
+deallocation. Explicit memory deallocation is faster 
+(especially for small objects) but implicit deallocation (garbage collection) 
+is more reliable. In POST++ mark and sweep garbage collection scheme is used.
+There is special object in the storage: <EMP>root object</EMP>. 
+Garbage collector first marks all objects accessible from the root object
+(i.e. it is possible to reach the object starting from the root object, and
+navigating through references). Then all objects that are not marked
+during first stage of GC will be deallocated.
+Garbage collection can be made during loading objects from the file
+(if you pass <CODE>do_garbage_collection</CODE> attribute to 
+<CODE>storage::open()</CODE> method). It is also possible to explicitly
+invoke garbage collection during program execution by calling 
+<CODE>storage::do_mark_and_sweep()</CODE> method. But be sure that there are
+no program variable pointed to objects inaccessible from the root objects 
+(these objects will be deallocated by GC).<P>
+
+Because of multiple inheritance C++ classes can have non zero offset
+within object and references inside object are possible. That is why
+we have to use special techniques to access object header. 
+POST++ maintains page allocation bitmap each bit of which corresponds to
+the page in the storage. If some large object is allocated
+at several pages, then bits corresponding to all pages occupied by this object
+except first one will be set to 1. All other pages have correspondent bits in 
+bitmap cleared.  To find start address of the object, we first align pointer 
+value on the page size. Then POST++ finds page in bitmap that contains 
+beginning of the object (this page should have zero bit in bitmap). 
+Then we extract information about the object size from object header placed 
+at the beginning of this page. If size is greater than half of page size then 
+we have already found object descriptor: it is at the beginning of the page. 
+Otherwise we calculate fixed block size used for this page and round down 
+offset of pointer within this page to block size. This scheme of
+header location is used by garbage collector, <CODE>operator delete</CODE>
+defined in <CODE>object</CODE> class and by methods extracting information
+from the object header about object size and class.<P>
+
+In POST++ special overloaded <CODE>new</CODE> method is provided
+for allocation of objects in the storage. This method takes as extra 
+parameters class descriptor of created object, storage in which object
+should be created and, optionally, size of varying part of the object instance.
+Macro <CODE>new_in(STORAGE, CLASS)</CODE> provides 
+"syntax sugar" for persistent object creation. 
+Persistent object can be delete by redefined <CODE>operator delete</CODE>. 
+
+
+<H2><A NAME = "object">Persistent object protocol</A></H2>
+
+All classes of persistent objects in POST++ should be derived from
+<CODE>object</CODE> class defined in <A HREF = "object.h">object.h</A>. 
+This class contains no variables and provides methods for object 
+allocation/deallocation and obtaining
+information about object class and size at runtime. It is possible to 
+use <CODE>object</CODE> class as one of multiple bases of inheritance
+(order of bases is not significant). Each persistent class should
+have constructor which is used by POST++ system (see section 
+<A HREF="#classinfo">Describing object class</A>).
+That means that you should not use constructor without parameters for
+normal object initialization. If your class constructor even has no
+meaningful parameters, you should add dummy one to distinguish your
+constructor with constructor created by macro <CODE>CLASSINFO</CODE>.<P>
+
+To access objects in persistent storage programmer needs some kind of root
+object from which each other object in storage can be accessed by normal 
+C pointers. POST++ storage provides two methods allowing you to specify and 
+obtain reference to the root object:
+
+<PRE>
+        void    set_root_object(object* obj);
+        object* get_root_object();
+</PRE>
+
+When you create new storage <CODE>get_root_object()</CODE> returns NULL.
+You should create root object and store reference to it by 
+<CODE>set_root_object()</CODE> method. Next time you are opening storage, 
+root object can be retrieved by <CODE>get_root_object()</CODE>.<P>
+
+<B><I>Hint</I></B>: In practice application classes used to be changed during 
+program development and support. Unfortunately POST++ due to its simplicity
+provides no facilities for automatic object conversion (see for example
+lazy object update scheme in  
+<A HREF = "http://www.ispras.ru/~knizhnik/goods.html">GOODS</A>), 
+So to avoid problems with adding new fields to the objects, I can recommend
+you to reserve some free space in objects for future use. This is especially 
+significant for root object, because it is first candidate for adding new 
+components. You should also avoid reverse references to the root object. 
+If no other object has reference to the root objects, then root object
+can be simply changed (by means of <CODE>set_root_object</CODE> method)
+to instance of new class. POST++ storage provides methods for setting
+and retrieving storage version identifier. This identifier can be used
+by application for updating objects in the storage depending on the storage
+and the application versions.<P>
+
+<H2><A NAME = "storage::new">Storage constructor</A></H2>
+
+You can use several storages in your application simultaneously. 
+Storage constructor takes one mandatory argument - path to the storage file.
+If this file has no extension, then POST appends suffix ".odb" to the name
+of the file.
+This file name is also used by POST++ to form names of some auxiliary files:<P>
+
+<TABLE>
+<TR><TH>file description</TH><TH>when used</TH><TH>suffix</TH></TR>
+<TR><TD>temporary file with new storage image</TD>
+<TD>used in non-transaction mode to store new image of storage</TD>
+<TD>".tmp"</TD></TR>
+
+<TR><TD>transaction log file</TD>
+<TD>used in transaction mode to saved shadow pages</TD>
+<TD>".log"</TD></TR>
+
+<TR><TD>saved copy of storage file</TD>
+<TD>used only in Windows-95 for renaming temporary file</TD>
+<TD>".sav"</TD></TR></TABLE><P>
+
+Two other parameters of storage constructor have default values.
+First of them <CODE>max_file_size</CODE> specifies limitation of 
+storage file extension. If storage file is larger than 
+<CODE>storage::max_file_size</CODE> then it will not be truncated but
+further extends are not possible. If <CODE>max_file_size</CODE> is 
+greater than the file size, then behavior depends on storage opening mode.
+In transaction mode, file is mapped on memory with read-write protection.
+Windows-NT/95 extends in this case size of the file till 
+<CODE>max_file_size</CODE>. The file size will be truncated by 
+<CODE>storage::close()</CODE> method to the boundary of last object allocated 
+in the storage. In Windows it is necessary to have at least 
+<CODE>storage::max_file_size</CODE> free bytes on disk to successfully
+open storage in read-write mode even if you are not going to add new objects 
+in the storage.<P>
+
+The last parameter of storage constructor is <CODE>max_locked_objects</CODE>,
+This parameter is used only in transaction mode to provide buffering
+of shadow pages writes to the transaction log file. To provide 
+data consistency POST++ should guarantee that shadow page will be 
+saved in the transaction log file before modified page will
+be flushed on disk. POST++ use one of two approaches:
+synchronous log writes (<CODE>max_locked_objects == 0</CODE>)
+and buffered writes with locking of pages in memory. By locking
+page in the memory, we can guaranty that it will not be swapped out 
+on disk before transaction log buffers. Shadow pages are written to
+the transaction log file in asynchronous mode (with operating system
+cashing enabled). When number of locked pages exceeds 
+<CODE>max_locked_pages</CODE>, log file buffers are flushed on disk
+and all locked pages are unlocked. Such approach can significantly
+increase transaction performance (up to 5 times under NT). But unfortunately
+different operating systems use different approaches to locking pages in 
+memory. 
+
+<UL>
+<LI> Windows 95 doesn't support it at all. 
+<LI> In Windows NT every process can lock it's pages, but total number of 
+     locked pages should not exceed process working set quota. By default 
+     process can't lock more than 30 pages. If you specify 
+     <CODE>max_locked_pages</CODE> parameter greater than 30, than 
+     POST++ will try to extend process working set to feet your
+     requirement. But my experiments show that difference in performance
+     with 30 and 60 locked pages is very negligible. 
+<LI> In Unix only superuser can lock pages in memory. That is why
+     file constructor checks if process has enough permissions
+     to use lock operations. So if you specify <CODE>max_locked_pages</CODE>
+     parameter greater than 0, then decision whether to use synchronous or
+     asynchronous writes to the transaction log file will be taken at 
+     moment of storage class creation. If you want to use benefits of
+     memory locking mechanism (2-5 times, depending on type of transaction),
+     you should change owner of your application to <CODE>root</CODE> and
+     grant <CODE> set-user-ID</CODE> permission:	 
+     <CODE>chmod +s application</CODE>.
+     
+</UL><P>
+
+
+<H2><A NAME = "storage::open">Opening storage</A></H2>
+ 
+POST++ uses memory mapping mechanism for accessing data from 
+the file. Two different approaches are used in POST++ to provide
+storage data consistency. First and more advanced is based on
+transaction mechanism using shadow pages to provide storage recovery
+after fault and transaction rollback. <I>Before write shadow page creation</I>
+algorithm is used. This algorithm is implemented in the following way: 
+all mapped on file pages are set to readonly protection. Any write
+access to such page will cause access violation exception. This exception
+is handled by special handler, which change page protection to
+read-write and place copy of this page in transaction log file (log file name 
+is combined from the original data file name and suffix ".log").
+All following write accesses to this page will not cause page faults.
+Storage method <CODE>commit()</CODE> flushes all modified pages on disk and
+truncates the log file. <CODE>storage::commit()</CODE> method is implicitly
+called by <CODE>storage::close()</CODE>. If fault happened before 
+<CODE>storage::commit()</CODE> operation, all changes will be undone by coping 
+modified pages from transaction log to the storage data file. Also all changes 
+can be undone explicitly by <CODE>storage::rollback()</CODE> method. To choose
+transaction based model of data file access, specify 
+<CODE>storage::use_transaction_log</CODE> attribute for 
+<CODE>storage::open()</CODE> method.<P>
+
+Another approach to providing data consistency is based on 
+copy on write mechanism. In this case original file is not affected. 
+Any attempt to modify page that is mapped on the file, cause creation
+copy of the page, which is allocated from system swap and has read-write 
+access. File is updated only by explicit call of <CODE>storage::flush()</CODE> 
+method. This method writes data to temporary file (with suffix ".tmp") 
+and then renames this file to original one. 
+So this operation cause an atomic update of the file (certainly if 
+operating system can guaranty atomicity of <CODE>rename()</CODE> operation).<P>
+
+<B><I>Attention:</I></B> If you are not using transactions,
+<CODE>storage::close()</CODE> method doesn't flush data in the file. So if
+you don't call <CODE>storage::flush()</CODE> method before 
+<CODE>storage::close()</CODE> all modifications done since last 
+<CODE>flush</CODE> will be lost.<P>
+
+<B><I>Windows 95 specific:</I></B> In Windows 95 
+rename to existing file is not possible, so
+original file is first saved in file with name with suffix ".sav".
+Then temporary file wit suffix ".tmp" is renamed
+to the original name and finally old copy is removed. So if fault
+is happened during <CODE>flush()</CODE> operation and after it you find 
+no storage file, please do not panic, just look for file with name terminated
+with ".sav" suffix and rename it to the original one.<P>
+
+<B><I>Hint:</I></B> I recommend you to use transactions if you are planning
+to save data during program execution. It is also possible with
+copy on write approach but it is much more expensive. Also transactions are
+always preferable if size of storage is large, because creating temporary
+copy of file will require a lot of disk space and time.<P>
+
+There are several attributes, which can be passed to storage 
+<CODE>open()</CODE> method:
+
+<DL>
+<DT><B>support_virtual_functions</B><DD> 
+This attribute should be set if objects 
+with virtual functions are placed in the storage. If this attribute is not set,
+POST++ decides that all persistent objects contain references only within 
+storage (to other objects in the storage). So adjustment of references
+should be done only if base address of data file mapping is changed 
+(this address is stored in the first word of data file and POST++ always 
+tries to map file to the same address to avoid unnecessary reference 
+adjustment). But if object class contains virtual functions, pointer to 
+virtual table is placed inside object. If you recompile your application, 
+address of this table can be changed. POST++ library compares timestamp
+of executable image with timestamp stored in database created by this 
+application. If these timestamp are not equal, correction of virtual table
+pointer should be performed. To get application timestamp POST++
+should locate executable file image. Unfortunately there is no portable
+way to find out executable file name in Unix. Under Unix POST++ looks 
+at the value of environment variable "_", which is set by shell. 
+This approach will not work if process was started not by shell
+(for example by <CODE>system()</CODE>) or working directory is changed
+by <CODE>chdir()</CODE>. The most portable way is to use file
+<A HREF = "comptime.cxx">comptime.cxx</A>, which should be compiled each
+time you recompile your application and linked together with storage
+library. There is no such problem in Windows, where name of executable image
+can be obtained by Win32 API. While storage 
+opening POST++ compares this timestamp with timestamp stored in the data file 
+and if they are different and <CODE>support_virtual_functions</CODE> attribute 
+is specified then correction of all objects (by calling default constructor) 
+will be done.
+
+<DT><B>read_only</B><DD>
+By setting this attribute programmer says that he wants only readonly access
+to the data file. POST++ will create readonly view of the data file and any 
+attempt to change some object in the storage or allocate new one will cause 
+protection violation fault. There is one exception: if it is impossible to map
+data file to the same address or application is changed and 
+<CODE>support_virtual_functions</CODE> is specified, then protection of region
+is temporary changed to copy on write and conversion of loaded objects takes 
+place.
+
+<DT><B>use_transaction_log</B><DD>
+Setting of this attribute force using transactions for all data file
+updates. Shadow page strategy is used for implementing transactions.
+Transaction is opened implicitly when storage first modification
+of storage is done. It is closed explicitly either by 
+<CODE>storage::commit()</CODE> or by <CODE>storage::rollback()</CODE>
+operations. Method <CODE>storage::commit()</CODE> saves all modified
+pages on disk and truncates transaction log, method 
+<CODE>storage::rollback()</CODE> undo all changes made within this transaction.
+
+<DT><B>no_file_mapping</B><DD>
+By default POST++ will map data file to the process virtual memory.
+Time of opening database is greatly reduced in this case, because pages 
+of the file will be loaded on demand. But if size of database is not so large
+or all data from the database need to be accessed immediately, then
+reading file to memory can be preferable to using virtual memory mapping
+because no extra overhead of handling page faults takes place in this case.
+Flag <code>no_file_mapping</code> prevents POST++ from mapping file
+and cause reading it in allocated memory segment.
+
+<DT><B>fault_tolerant</B><DD>
+This flag should be used by applications which want to preserve database 
+consistency in case of system or application fault. It is not necessary to 
+specify this flag if <code>use_transaction_log</code> flag is used, because
+consistency will be provided by transaction mechanism in this case.
+If <code>use_transaction_log</code> flag is not specified and
+flag <code>fault_tolerant</code> flag is set, POST++ will not change
+original file preserving its consistency. This is achieved either by
+reading file in memory (if flag <code>no_file_mapping</code> is set)
+or using copy-on-write pages protection. In last case attempt of
+modification of mapped on file page will cause creation copy of the page 
+in system swap file. Method <code>flush()</code> will save in-memory
+image of database to temporary file and then rename it to original file
+using atomic operation. If <code>fault_tolerant</code> flag is not specified,
+POST++ do in-place modification of database pages, providing maximal
+application performance (because there is no overhead caused by 
+copying modified pages and saving database image in temporary file)
+As far as modified pages are 
+not flushed to the disk immediately, some changes can be lost as a result
+of system fault (the worst thing is that some modified pages can be saved
+to the disk while other not - so database consistency can be violated).
+
+<DT><B>do_garbage_collection</B><DD>
+When this attribute is set POST++ will perform garbage collection in
+storage during opening. The operation of collecting garbage 
+is combined with reference adjustment. Using garbage collection is always
+more safer than manual memory deallocation (due to the problem of 
+hanging references), but explicit memory deallocation has less overhead. 
+Garbage collection in POST++ has one more advantage in comparison with
+explicit deallocation: garbage collector performs utilization of
+pages used for small objects. If there are no more allocated small
+objects at the page then garbage collector will include this page
+in the list of free pages. This is not done for explicit deallocation because
+free cells for small objects are linked in chain and it is not so easier
+to remove them from this chain (in case of garbage collector all chains
+are reconstructed). Even if you are using explicit memory deallocation,
+I suggest you to do time by time garbage collection to check for
+reference consistency and absence of memory leaks 
+(<CODE>garbage_collection</CODE> method returns number of deallocated 
+objects and if you are sure that you have explicitly deallocate all
+unreachable objects, then this number should be zero).
+As far as garbage collector modifies all objects in the storage (set mark bit),
+relink free objects in chains), running GC in transaction mode can be
+time and disk space consuming operation (all pages from the file will be copied
+to the transaction log file). 
+</DL><P>
+
+You can specify maximal size for storage files by 
+<CODE>file::max_file_size</CODE> variable. If size of data file is less
+than <CODE>file::max_file_size</CODE> and mode is not <CODE>read_only</CODE>,
+then extra <CODE>size_of_file - file::max_file_size</CODE> bytes of 
+virtual space will be reserved after the file mapping region. 
+When storage size is extended (because of new objects allocation), 
+this pages will be committed (in Windows NT) and used. If size of file is 
+greater than <CODE>file::max_file_size</CODE> or <CODE>read_only</CODE> mode 
+is used, then size of mapped region is exactly the same as the file size. 
+Storage extension is not possible in the last case. In Windows I use
+<CODE>GlobalMemoryStatus()</CODE> function to obtain information about 
+actually available virtual memory in the system and reduce 
+<CODE>file::max_file_size</CODE> to this value. Unfortunately I found no
+portable call in Unix which can be used for the same purpose
+(<CODE>getrlimit</CODE> doesn't return actual information about available 
+virtual memory for users process).<P>
+
+Interface to object storage is specified in file 
+<A HREF = "storage.h">storage.h</A> and implementation can be found in
+<A HREF = "storage.cxx">storage.cxx</A>. Operating system dependent part
+of mapped on memory file is encapsulated within <CODE>file</CODE> class,
+which definition is in <A HREF = "file.h">file.h</A> and implementation
+in <A HREF = "file.cxx">file.cxx</A>.<P>
+
+
+<H2><A NAME = "installation">Installation of POST++</A></H2>
+
+Installation of POST++ is very simple. It is now checked for the following 
+platforms: Digital Unix, Linux, Solaris, Windows NT 4.0, Windows 95. 
+I expect no problems with most of all other new Unix dialect (AIX, 
+HP-UX 10, SCO...). Unfortunately I have no access to this systems.
+At Windows I compiled POST++ by Microsoft Visual C++ 5.0 and Borland 5.02 
+compilers. Makefile for Visual C++ is  <A HREF = "makefile.mvc">makefile</A>,
+and makefile for Broland C++ is <A HREF = "makefile.mvc">makefile</A>.<P>
+
+The only thing that you are needed to use POST++ is library
+(<CODE>libstorage.a</CODE> at Unix and <CODE>storage.lib</CODE> at Windows).
+This library can be produced by just issuing <CODE>make</CODE>
+command.  There is special <CODE>MAKE.BAT</CODE> for Microsoft Visual C++ 
+which invokes <CODE>NMAKE</CODE> with <CODE>makefile.mvc</CODE> as input
+(if your are using Borland either edit this file or invoke Borland
+make by <CODE>make.exe -f makefile.bcc</CODE> command).<P>
+ 
+Installation in Unix can be completed by copying POST++ library and header
+files to some standard system catalogs. You should set proper values for
+<code>INSTALL_LIB_PATH</code> and <code>INSTALL_INC_PATH</code>
+variables in makefile and execute <code>make install</code> command.
+Default value for <code>INSTALL_LIB_PATH</code> is <code>/usr/local/lib</code>
+and for <code>INSTALL_INC_PATH</code> is <code>/usr/local/include</code>.
+You can avoid copying of POST++ files in system catalogs by specifying
+path to POST++ catalog to compiler and linker explicitly.<P>
+
+
+<H2><A NAME = "classes">POST++ class library</A></H2>
+
+POST++ contains definition of some persistent classes, which 
+can be used in your application and also are good examples of 
+developing classes for POST++. You can see that there are almost no POST 
+specific code in the implementation of these classes.
+These classes include array, matrix, string, L2-list, hash table, AVL-tree, 
+R-tree, text object. R-tree provides fast access to spatial object 
+(object with spatial coordinates). Text object contains modification of 
+Boyer and Moore algorithm extended to search multiple patterns combined by 
+OR/AND relation. Definition of these classes can be found in following files:
+<P>
+
+<TABLE BORDER>
+<TR BGCOLOR="#A0A0A0"><TH>Description</TH> <TH>Interface</TH> <TH>Implementation</TH></TR>
+<TR><TD>Arrays of scalars and references, matrixes and strings</TD>
+    <TD><A HREF = "array.h">array.h</A></TD> 
+    <TD><A HREF = "array.cxx">array.cxx</A></TD></TR>
+<TR><TD>L2-list and AVL-tree</TD>
+    <TD><A HREF = "avltree.h">avltree.h</A></TD> 
+    <TD><A HREF = "avltree.cxx">avltree.cxx</A></TD></TR>
+<TR><TD>Hash table with collision chains</TD>
+    <TD><A HREF = "hashtab.h">hashtab.h</A></TD>
+    <TD><A HREF = "hashtab.cxx">hashab.cxx</A></TD></TR>
+<TR><TD>R-tree with quadratic method of nodes splitting</TD>
+    <TD><A HREF = "rtree.h">rtree.h</A></TD>
+    <TD><A HREF = "rtree.cxx">rtree.cxx</A></TD></TR>
+<TR><TD>T-tree (combination of AVL tree and array)</TD>
+    <TD><A HREF = "ttree.h">ttree.h</A></TD>
+    <TD><A HREF = "ttree.cxx">ttree.cxx</A></TD></TR>
+<TR><TD>Text object with modified Boyer and Moore search algorithm</TD>
+    <TD><A HREF = "textobj.h">textobj.h</A></TD> 
+    <TD><A HREF = "textobj.cxx">textobj.cxx</A></TD></TR>
+</TABLE><P>
+
+In the article "A study of index structures for main memory database management
+systems" T.J. Lehman and M.J Carey proposed T-trees as a storage efficient data
+structure for main memory databases. T-trees are based on AVL trees proposed
+by Adelson-Velsky and Landis. In this subsection, we provide an overview of 
+T-trees as implemented in POST++.<P> 
+
+Like AVL trees, the
+height of left and right subtrees of a T-tree may differ by at most one.
+Unlike AVL trees, each node in a T-tree stores multiple key values in a sorted
+order, rather than
+a single key value. The left-most and the right-most key value in a node
+define the range of key values contained in the node. Thus, the left subtree
+of a node contains only key values less than the left-most key value, while the
+right subtree contains key values greater than the right-most key value in the
+node. A key value which is falls between the smallest and largest key values in
+a node is said to be <I>bounded</I> by that node. 
+Note that keys equal to the smallest
+or largest key in the node may or may not be considered to be bounded based on
+whether the index is unique and based on the search condition (e.g.
+"greater-than" versus "greater-than or equal-to").<P>
+
+A node with both a left and
+a right child is referred to as an <I>internal node</I>, 
+a node with only one child is referred to as a <I>semi-leaf</I>, 
+and a node with no children is referred to as a <I>leaf</I>. 
+In order to keep occupancy high, every internal node has a minimum number
+of key values that it must contain (typically <I>k-2</I>, if <I>k</I>
+is the maximum number
+of keys that can be stored in a node). However, there is no occupancy condition
+on the leaves or semi-leaves.<P>
+
+Searching for a key value in a T-tree is
+relatively straightforward. For every node, a check is made to see if the key
+value is bounded by the left-most and the right-most key value in the node; if
+this is the case, then the key value is returned if it is contained in the node
+(else, the key value is not contained in the tree). Otherwise, if the key value
+is less than the left-most key value, then the left child node is searched;
+else the right child node is searched. The process is repeated until either the
+key is found or the node to be searched is null.<P>
+
+Insertions and deletions into
+the T-tree are a bit more complicated. For insertions, first a variant of the
+search described above is used to find the node that bounds the key value to
+be inserted. If such a node exists, then if there is room in the node, the key
+value is inserted into the node. If there is no room in the node, then the key
+value is inserted into the node and the left-most key value in the node is
+inserted into the left subtree of the node (if the left subtree is empty, then
+a new node is allocated and the left-most key value is inserted into it). If no
+bounding node is found then let <I>N</I> be the last node encountered by the 
+failed search and proceed as follows: If <I>N</I>
+has room, the key value is inserted into <I>N</I>;
+else, it is inserted into a new node that is either the right or left child of
+<I>N</I>, depending on the key value and the left-most and right-most key 
+values in 
+<I>N</I>.<P>
+
+Deletion of a key value begins by determining the node containing the key
+value, and the key value is deleted from the node. If deleting the key value
+results in an empty leaf node, then the node is deleted. If the deletion
+results in an internal node or semi-leaf containing fewer than the minimum
+number of key values, then the deficit is made up by moving the largest key in
+the left subtree into the node, or by merging the node with its right child.
+<P> 
+
+In both insert and delete, allocation/deallocation of a node may cause the 
+tree
+to become unbalanced and rotations (RR, RL, LL, LR) may need
+to be performed. (The heights of subtrees in the following description include
+the effects of the insert or delete.) In the case of an insert, nodes along
+the path from the newly allocated node to the root are examined until either 
+
+<OL>
+<LI>a node for which the two subtrees have equal heights is found 
+(in this case no rotation needs to be performed), or
+<LI>a node for which the difference in
+heights between the left and the right subtrees is more than one is found and a
+single rotation involving the node is performed. 
+</OL><P>
+
+In the case of delete, nodes
+along the path from the de-allocated node's parent to the root are examined
+until a node is found whose subtrees' heights now differ by one. Furthermore,
+every time a node whose subtrees' heights differ by more than one is
+encountered, a rotation is performed. Note that de-allocation of a node may
+result in multiple rotations.<P>
+
+
+There are several test programs for testing classes from POST++ persistent 
+class library, which are included in default make target:<P>
+
+<TABLE BORDER WIDTH=80%>
+<TR BGCOLOR="#A0A0A0"><TH>Program</TH> <TH>Tested classes</TH></TR>
+<TR><TD><A HREF = "testtree.cxx">testtree.cxx</A></TD>
+    <TD>AVL-tree, l2-node, hash table</TD></TR>
+<TR><TD><A HREF = "testtext.cxx">testtext.cxx</A></TD>
+    <TD>text, string</TD></TR>
+<TR><TD><A HREF = "testspat.cxx">testspat.cxx</A></TD>
+    <TD>rectangle, R-tree, hash table</TD></TR>
+<TR><TD><A HREF = "testperf.cxx">testperf.cxx</A></TD>
+    <TD>T-tree insert, find and remove operations</TD></TR>
+</TABLE><P>
+
+
+<H2><A NAME = "stl">Using STL classes with POST++</A></H2>
+It is possible to store and retrieve STL classes from the POST++ storage.
+POST++ provides special STL allocator and redefined operators new/delete
+for making STL objects persistent. There are several models of making STL 
+classes persistent, controlled by the following macros:
+
+<DL>
+<DT><CODE>USE_MICROSOFT_STL</CODE>
+<DD>Uses Microsoft STL classes, which are shipped with Microsoft Visual C++ 
+compiler. This library is not fully complaint with C++ STL standard.
+<DD><DT><CODE>USE_STD_ALLOCATORS</CODE>
+<DD>Implements allocators as specified in the C++ standard. 
+Allocator object is included in the STL object and instance methods of
+the allocator object are used for space allocation/deallocation.
+So it is possible to implement "smart" allocators: allocator will 
+allocate space for the object in the POST++ storage only when the object 
+containing this allocator was also placed in the storage. Otherwise, space
+for the object will be allocated in the normal way by standard 
+<code>malloc()<code> function. 
+This option can be used with SGI STL library as well as with 
+Microsoft STL library. Note that standard-conforming allocators in SGI
+STL use many language features that are not yet widely implemented.  
+In particular, they rely on
+member templates, partial specialization, partial ordering of function
+templates, the typename keyword, and the use of the template keyword
+to refer to a template member of a dependent type. So only few C++ compilers
+will be able to compile SGI STL library when this macro is defined.
+If this macro is not set, then POST provides allocator with static member 
+functions and all objects are allocated in the POST++ storage. Only one POST++ 
+storage can be opened at each moment of time by the application which uses such
+allocator. 
+<DD><DT><CODE>REDEFINE_DEFAULT_ALLOCATOR</CODE>
+<DD>
+There two ways of making STL object persistent.
+One way is to introduce new type:
+<PRE>
+typedef basic_string&lt;char, char_traits&lt;char&gt;, post_alloc&lt;char&gt; &gt; post_string;
+</PRE>
+Another way is to made all classes persistent capable. When 
+<code>REDEFINE_DEFAULT_ALLOCATOR</code> macro is defined, any STL class can be allocated in the POST++ storage. To create new object in
+the persistent storage, you should specify the storage as extra parameter of 
+new operator. If storage is omitted, then object will be allocated using 
+standard <code>malloc()</code> function.
+</DL><P>
+
+POST++ interface to STL do not require any changes in STL classes so you can 
+use any STL implementation you want. But as a result, STL classes don't 
+contain type descriptors and so POST++ has no information about format of STL 
+objects. So POST++ is not able to perform garbage collection and references 
+adjustment. When STL interface is used POST++ storage should be always mapped 
+to the same virtual address. If you pass <code>storage::fixed</code> flag 
+to the <code>storage::open(int flags)</code> method, then POST++ will report
+error and <code>open</code> will return <code>false</code> if it is not 
+possible to map the storage to the same memory address. But if your 
+application is working only with one storage and do not map other object on
+virtual memory, then in almost all operating it will be possible to map the
+storage to the same memory address.<P>
+
+POST++ interface to STL library is defined in 
+<A HREF="post_stl.h">post_stl.h</A> header file. This file should be included
+before any STL include file. Also macros <code>REDEFINE_DEFAULT_ALLOCATOR</code>
+, <code>USE_STD_ALLOCATORS</code> and <code>USE_MICROSOFT_STL</code> should
+be defined before <code>post_stl.h</code>.<P>
+
+POST++ contains example of working with STL++ classes 
+<A HREF="stltest.cxx">stltest.cxx</A>. This example uses two STL classes - 
+<code>string</code> and <code>vector</code>. The lines readen from standard 
+input are pushed in the vector and when program is started once again all 
+elements of the vector are printed to the standard output. 
+This example is included in default target of the makefile for 
+Microsoft Visual C++ (it uses Microsoft  STL classes shipped with VC). 
+You can also try to build this test with
+some other version of STL library but do not forget about
+<code>REDEFINE_DEFAULT_ALLOCATOR</code> and <code>USE_STD_ALLOCATORS</code> 
+macros. This example was also tested with SGI STLport 3.12 and GCC 2.8.1.<P>
+
+
+<H2><A NAME = "new">Replacing of standard allocators</A></H2>
+
+In previous section I explain how to use POST++ with STL library.
+But there are a lot of other C++ and C libraries and application which
+you can want to use, but which don't provide such flexible allocators
+mechanism as STL. In this case the only possible solution (if you do not want
+or can not change sources of these libraries) is replacing of 
+standard allocation mechanism with one provided by POST++. So any
+dynamically allocated object will be created in POST++ storage 
+(only one storage can be used in this case).<P>
+
+POST++ distribution contains file
+<code>postnew.cxx</code> which redefines standard <code>malloc, free, 
+realloc</code> and <code>calloc</code> functions. When storage is opened, 
+all objects are allocated in this storage. Otherwise <code>sbrk()</code>
+function is used for allocating objects (space allocated for such 
+object is not reclaimed). It is possible not to touch this standard C 
+allocation functions and redefine only default C++ operator new and delete.
+To do it defined <code>DO_NOT_REDEFINE_MALLOC</code> macro when compiling
+<code>postnew.cxx</code>. Object file produced from <code>postnew.cxx</code>
+should be passed to the linker before standard C library.<P>
+
+As an example of such POST++ usage you can look at <code>testnew.cxx</code>
+and <code>testqt.cxx</code>. First one illustrate how standard C++
+arrays are made persistent. And second one illustrate how POST++ can be used
+with Qt class library.<P>
+
+As far as POST++ has no information about format of stored classes
+there are some restrictions on POST++ usage:<P>
+
+<OL>
+<LI>Classes with virtual functions are not supported (POST++ is not able to 
+properly initialize pointers to virtual function tables).
+<LI>Implicit memory deallocation (garbage collection) is not possible - POST++
+has no information about location of pointers inside objects.
+<LI>Storage should always be mapped to the same virtual address because POST++
+is not able to adjust pointers if base address is changed. 
+</OL>
+
+If all these restrictions are not critical for your application, you can 
+made it persistent without almost any code modification. This approach can be
+used both for C and C++ programs.<P>
+
+
+<H2><A NAME = "usage">How to use POST++</A></H2>
+
+There are some examples of classes and application for POST++. 
+The simplest of them is game <I>"Guess an animal"</I>. Algorithm of
+this game is very simple and the result looks rather impressive 
+(something like artificial intelligence). Moreover this game is very good 
+example, illustrating benefits of persistent object storage. 
+Sources of this game are in file <A HREF = "guess.cxx">guess.cxx</A>. 
+Building of this game is included in default make target. 
+To run it just execute <CODE>guess</CODE>.
+<P>
+
+<B><I>Unix specific: </I></B> 
+When you will link your Unix application with POST++ library 
+and persisent objects in application contain virtual functions, please do not 
+forget to recompile <A HREF = "comptime.cxx">comptime.cxx</A> file and include
+it in the linker's list. This file is necessary for POST++ to
+provide executable file timestamp, which is placed in the storage and 
+used to determine when application is changed and reinitialization
+of virtual function table pointers in objects is needed. 
+<B><I>Attention!</I></B> This file should be recompiled each time your are 
+relinking your application. I suggest you to make compiler to call linker for
+you and include <CODE>comptime.cxx</CODE> source file in the list of object 
+files for the target of building executable image 
+(see <A HREF = "makefile">makefile</A>).<P>
+
+
+<H2><A NAME = "debugging">Specific of debugging POST++ applications</A></H2>
+
+Information in this section is meaningful only for application using
+transactions. POST++ uses page protection mechanism to provide creation of 
+shadow page on the original page modification, After storage opening or
+transaction commit all mapped on file pages are read-only protected.
+So any attempt to modify contents of the object allocated at this page will
+cause access violation exception. This exception is handled by 
+special POST++ handler. But if you are using debugger, it will 
+catch this exception first and stop application. If you want to debug
+your application you should do some preparations:
+
+<UL>
+<LI> In Unix it is enough to tell debugger not to catch SIGSEGV signal.
+For example for GDB it can be done with command: 
+<CODE>handle SIGSEGV nostop noprint pass</CODE>. If SIGSEGV signal
+is not caused by storage page protection violation, but due to a bug
+in your program, POST++ exception handler will "understand" that it is
+not his exception and send SIGABRT signal to the self process, which
+can be normally catched by debugger.
+
+<LI> In Windows POST++ uses unhandled exception filter to
+handle storage page protection violations. Unfortunately it is impossible
+to make Microsoft Debugger to ignore unhandled exceptions. If you
+are going to debug your application, you should enclose all your program code 
+(<CODE>main</CODE> or <CODE>WinMain</CODE> function) with structured 
+exception block. You should always use structured exception handling 
+with Borland C++, because Unhandled Exception Filter is not correctly called 
+in Borland. Please use two macros <CODE>SEN_TRY</CODE> and 
+<CODE>SEN_ACCESS_VIOLATION_HANDLER()</CODE> to enclose body of main 
+(or WinMain) function:
+
+<PRE>
+      main() { 
+          SEN_TRY { 
+               ...
+          } SEN_ACCESS_VIOLATION_HANDLER();
+          return 0;
+      }
+</PRE>
+
+Be sure that Debugger behavior for this exception is "Stop if not handled"
+and not "Stop always" (you can check it in Debug/Exceptions menu).
+In file <A HREF = "testrans.cxx">testrans.cxx</A> you can find example of
+using structured exception handling.
+</UL>
+
+
+<H2><A NAME = "PS">Some more information about POST++</A></H2>
+
+POST++ is freeware. It is distributed in hope of been useful. You can do
+with it anything you want (with no limitation on distributing products
+using POST++). I will be glad to help you in using POST++ and receive
+all kind of information (bug reports, suggestions...) about POST++.
+Freeware status of POST++ doesn't mean lack of support. I promice you to
+do my best to fix all reported bugs. Also e-mail support is guaranteed.
+POST++ can be used for various purposes: storing information between session,
+storing object system in file, snapshots, informational systems...
+But if you fill that you need more serious object oriented database for your
+application supporting concurrency, distribution and transactions,
+please visit <A HREF = "http://www.garret.ru/~knizhnik/goods.html">
+GOODS (Generic Object Oriented Database System) home page</A>. 
+
+<HR>
+<P ALIGN="CENTER"><A HREF="http://www.garret.ru/~knizhnik">
+<B>Look for new version at my homepage</B></A><B> | </B>
+<A HREF="mailto:knizhnik@garret.ru">
+<B>E-mail me about bugs and problems</B></A></P>
+</BODY>
+</HTML>

@@ -1,0 +1,175 @@
+# -*- makefile -*-
+# Makefile for Unix with g++ 3.* compiler. 
+# This file has no differences with makefile except building of STL tests.
+# Version of STL library shipped with GCC 3 si more compatible with standard 
+# but hacks with redifintion string (so that all strings doesn;t work here.
+
+CC=g++
+# if you use egcs-2.90.* version of GCC please add option -fno-exceptions 
+# to reduce code size and increase performance
+
+# Debug version
+#CFLAGS = -c -Wall -O0 -g -DDEBUG_LEVEL=DEBUG_TRACE
+
+# Optimized version
+CFLAGS = -c -Wall -O6 -g -DDEBUG_LEVEL=DEBUG_CHECK
+
+# Optimized version with switched off asserts
+#CFLAGS = -c -Wall -O6 -g -DNDEBUG
+
+LFLAGS=-g
+AR=ar
+ARFLAGS=-cru 
+
+EXAMPLES=guess testtree testtext testspat testperf testiter dumpmem testnew 
+STL_EXAMPLES=testmap2 stltest2
+
+INSTALL_LIB_PATH=/usr/local/post/lib
+INSTALL_INC_PATH=/usr/local/post/inc
+
+HEADERS=stdtp.h file.h storage.h classinfo.h object.h
+OBJS=file.o storage.o classinfo.o avltree.o rtree.o ttree.o array.o hashtab.o textobj.o post_c_api.o iterator.o
+
+all: libstorage.a postnew.o $(EXAMPLES)
+
+file.o: file.cxx $(HEADERS)
+	$(CC) $(CFLAGS) file.cxx
+
+storage.o: storage.cxx $(HEADERS)
+	$(CC) $(CFLAGS) storage.cxx
+
+classinfo.o: classinfo.cxx $(HEADERS)
+	$(CC) $(CFLAGS) classinfo.cxx
+
+avltree.o: avltree.cxx avltree.h $(HEADERS)
+	$(CC) $(CFLAGS) avltree.cxx
+
+rtree.o: rtree.cxx rtree.h dnmarr.h $(HEADERS)
+	$(CC) $(CFLAGS) rtree.cxx
+
+ttree.o: ttree.cxx ttree.h dnmarr.h $(HEADERS)
+	$(CC) $(CFLAGS) ttree.cxx
+
+array.o: array.cxx array.h $(HEADERS)
+	$(CC) $(CFLAGS) array.cxx
+
+hashtab.o: hashtab.cxx hashtab.h $(HEADERS)
+	$(CC) $(CFLAGS) hashtab.cxx
+
+iterator.o: iterator.cxx iterator.h $(HEADERS)
+	$(CC) $(CFLAGS) iterator.cxx
+
+textobj.o: textobj.cxx textobj.h $(HEADERS)
+	$(CC) $(CFLAGS) textobj.cxx
+
+postnew.o: postnew.cxx $(HEADERS)
+	$(CC) $(CFLAGS) postnew.cxx
+
+post_c_api.o: post_c_api.cxx post_c_api.h $(HEADERS)
+	$(CC) $(CFLAGS) post_c_api.cxx
+
+libstorage.a: $(OBJS)
+	$(AR) $(ARFLAGS) libstorage.a $(OBJS)
+
+install: libstorage.a
+	mkdir -p $(INSTALL_LIB_PATH)
+	cp libstorage.a $(INSTALL_LIB_PATH)
+	mkdir -p $(INSTALL_INC_PATH)
+	cp *.h $(INSTALL_INC_PATH)
+#
+# Examples
+#
+
+guess.o: guess.cxx $(HEADERS)
+	$(CC) $(CFLAGS) guess.cxx
+
+testtext.o: testtext.cxx textobj.h array.h $(HEADERS)
+	$(CC) $(CFLAGS) testtext.cxx
+
+testtree.o: testtree.cxx avltree.h hashtab.h $(HEADERS)
+	$(CC) $(CFLAGS) testtree.cxx
+
+testspat.o: testspat.cxx rtree.h dnmarr.h hashtab.h $(HEADERS)
+	$(CC) $(CFLAGS) testspat.cxx
+
+testperf.o: testperf.cxx ttree.h dnmarr.h $(HEADERS)
+	$(CC) $(CFLAGS) testperf.cxx
+
+testiter.o: testiter.cxx iterator.h ttree.h dnmarr.h $(HEADERS)
+	$(CC) $(CFLAGS) testiter.cxx
+
+testrans.o: testrans.cxx avltree.h $(HEADERS)
+	$(CC) $(CFLAGS) testrans.cxx
+
+dumpmem.o: dumpmem.cxx $(HEADERS)
+	$(CC) $(CFLAGS) dumpmem.cxx
+
+testnew.o: testnew.cxx $(HEADERS)
+	$(CC) $(CFLAGS) testnew.cxx
+
+
+guess: guess.o comptime.cxx libstorage.a
+	$(CC) $(LFLAGS) -o guess guess.o comptime.cxx libstorage.a
+
+testtext: testtext.o comptime.cxx libstorage.a
+	$(CC) $(LFLAGS) -o testtext testtext.o comptime.cxx libstorage.a
+
+testtree: testtree.o comptime.cxx libstorage.a
+	$(CC) $(LFLAGS) -o testtree testtree.o comptime.cxx libstorage.a
+
+testspat: testspat.o comptime.cxx libstorage.a
+	$(CC) $(LFLAGS) -o testspat testspat.o comptime.cxx libstorage.a
+
+testperf: testperf.o libstorage.a
+	$(CC) $(LFLAGS) -o testperf testperf.o libstorage.a
+
+testiter: testiter.o libstorage.a
+	$(CC) $(LFLAGS) -o testiter testiter.o libstorage.a
+
+testrans: testrans.o comptime.cxx libstorage.a
+	$(CC) $(LFLAGS) -o testrans testrans.o comptime.cxx libstorage.a
+
+dumpmem: dumpmem.o libstorage.a
+	$(CC) $(LFLAGS) -o dumpmem dumpmem.o libstorage.a
+
+testnew: testnew.o postnew.o
+	$(CC) $(LFLAGS) -o testnew testnew.o postnew.o libstorage.a
+
+#
+# Service targets
+#
+
+cleanobj:
+	rm -f *.o core *~ $(EXAMPLES) $(STL_EXAMPLES) testrans
+
+cleandbs: 
+	rm -f *.odb *.log *.tmp
+
+clean: cleanobj cleandbs
+
+cleanall: clean
+	rm -f *.a
+
+
+tgz:	cleanall
+	chmod +x GiST/tests/runtests.sh
+	cd ..; tar cvzf post.tgz post
+
+copytgz: tgz
+	mcopy -o ../post.tgz a:
+
+
+STL_INCLUDES=/usr/local/include
+
+stltest2.o: stltest2.cxx post_stl.h $(HEADERS)
+	$(CC) $(CFLAGS) -DUSE_STD_ALLOCATORS stltest2.cxx
+
+stltest2: stltest2.o libstorage.a 
+	$(CC) $(LFLAGS) -o stltest2 stltest2.o libstorage.a 
+
+testmap2.o: testmap2.cxx post_stl.h $(HEADERS)
+	$(CC) $(CFLAGS) -DUSE_STD_ALLOCATORS testmap2.cxx
+
+testmap2: testmap2.o libstorage.a 
+	$(CC) $(LFLAGS) -o testmap2 testmap2.o libstorage.a 
+

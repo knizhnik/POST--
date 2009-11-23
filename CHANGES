@@ -1,0 +1,116 @@
+--- Release version 1.23 (8.10.1999) -------------------------------------
+
+1. Fix buf with readonly mapping - open file in readwrite mode even 
+   when mode is read_only to allow adjustment of references.
+
+2. Port to FreeBSD. FreeBSD generate SIGBUS instead of SIGSEGV for 
+   page protection fault. 
+
+--- Release version 1.24 (12.10.1999) -------------------------------------
+
+1. Fix incompatibilities with 2.2.x Linux kernel. 
+
+--- Release version 1.28 (10.03.2000) -------------------------------------
+
+1. Support Gnu STL/STD library
+
+--- Release version 1.29 (9.08.2000) -------------------------------------
+
+1. Synchronization for concurrent access to several database instances
+
+--- Release version 1.30 (17.10.2000) -------------------------------------
+
+1. Provide compatibilty with SGI STL library from GCC. 
+
+--- Release version 1.31 (25.01.2001) -------------------------------------
+
+1. Fix bug in R-Tree
+2. Allows sharing of database file in readonly mode
+
+--- Release version 1.32 (05.03.2001) -------------------------------------
+
+1. Fix bug in Post STL allocator
+
+--- Release version 1.33 (29.06.2001) -------------------------------------
+
+1. Fix incompatibility with new Linux kernel, which doesn't support access beyond
+end of file for copy-on-write mapping.
+
+
+--- Release version 1.34 (05.12.2001) -------------------------------------
+
+1. Fix bug with transaction support under Win98 
+2. Fix bug with transaction recovery
+
+--- Release version 1.35 (14.01.2002) -------------------------------------
+
+1. STLport support 
+
+--- Release version 1.36 (26.04.2002) -------------------------------------
+
+1. Support generation of DLLs for windows
+
+--- Release version 1.37 (06.06.2002) -------------------------------------
+
+1. Add delete operators matching with defined new operators.
+2. Add C API
+3. Introduce post_raw_object for creating object without type descriptors
+
+--- Release version 1.38 (23.08.2002) -------------------------------------
+
+1. Add implementation of generalized search tree (GiST)
+
+--- Release version 1.39 (29.11.2002) -------------------------------------
+
+1. Porting to Sun CC++ compiler and Borland C++ compiler.
+
+--- Release version 1.40 (22.01.2003) -------------------------------------
+
+1. Fix bug in allocator
+2. Support STL from VC.NET
+
+--- Release version 1.41 (11.02.2003) -------------------------------------
+
+1. MinGW support
+
+--- Release version 1.42 (07.04.2003) -------------------------------------
+
+1. Fix bug in dnm_array::set_size
+2. Iterator for T-Tree implemented by Johan Sorensen <johan_sorensen@hotmail.com>
+
+--- Release version 1.43 (23.06.2003) -------------------------------------
+
+1. Fix bug in R-Tree
+2. Fix bug in VREFS macro (handling zero length)
+
+--- Release version 1.44 (11.07.2003) -------------------------------------
+
+1. Make it possible to tune allocation algorithm parameters using LARGE_OBJECTS macro.
+
+--- Release version 1.45 (20.08.2003) -------------------------------------
+
+1. Inverse iterator for T-Tree implemented by  Johan Sorensen <johan_sorensen@hotmail.com>
+
+--- Release version 1.46 (05.11.2003) -------------------------------------
+
+1. Make it possible to specify default mapping address in storage constructor.
+2. Fix VC-2003 compilation bug in post_stl.h 
+
+--- Release version 1.47 (30.01.2004) -------------------------------------
+1. Fix problems with building post_stl.h with GCC 3.2 compiler. 
+   Add new stltest2.cxx and testmap2.cxx files which use how to use POST++
+   with STL without redefinition of default allocator.
+
+--- Release version 1.48 (27.06.2004) -------------------------------------
+1. Optionally place all Post classes in post:: namespace (USE_NAMESPACES option)
+
+--- Release version 1.49 (18.05.2007) -------------------------------------
+1. Initialize with null removed elements in dyn_array_of_ptr to prevent
+garbage colecltor failure.
+2. Fix incompatibilities with new Linux versions
+
+--- Release version 1.50 (16.03.2009) -------------------------------------
+1. Support Judy arrays 
+
+--- Release version 1.51 (25.03.2009) -------------------------------------
+1. Port to Win64 done by Pierrick SIMIER <ps@snmplink.org>

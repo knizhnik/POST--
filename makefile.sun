@@ -1,0 +1,154 @@
+# -*- makefile -*-
+# Makefile for Solaris/SunOS with Sun C++ 4.1 compiler
+
+CC=CC
+
+# Debug version
+#CFLAGS = -c +w -g -DDEBUG_LEVEL=DEBUG_TRACE -D__sun__ -Dbool=int -Dtrue=1 -Dfalse=0
+
+# Optimized version
+CFLAGS = -c +w -O5 -DDEBUG_LEVEL=DEBUG_CHECK -D__sun__ -Dbool=int -Dtrue=1 -Dfalse=0
+
+# Optimized version with switched off asserts
+#CFLAGS = -c +w -O5 -g -DNDEBUG -D__sun__ -Dbool=int -Dtrue=1 -Dfalse=0
+
+LFLAGS=-g
+AR=ar
+ARFLAGS=-cru 
+
+EXAMPLES=guess testtree testtext testspat testperf testrans dumpmem
+
+INSTALL_LIB_PATH=/opt/post/lib
+INSTALL_INC_PATH=/opt/post/inc
+
+HEADERS=stdtp.h file.h storage.h classinfo.h object.h
+OBJS=file.o storage.o classinfo.o avltree.o rtree.o ttree.o array.o hashtab.o textobj.o post_c_api.o
+
+OSPACE=../ospace/Toolkit
+
+all: libstorage.a $(EXAMPLES)
+
+file.o: file.cxx $(HEADERS)
+	$(CC) $(CFLAGS) file.cxx
+
+storage.o: storage.cxx $(HEADERS)
+	$(CC) $(CFLAGS) storage.cxx
+
+classinfo.o: classinfo.cxx $(HEADERS)
+	$(CC) $(CFLAGS) classinfo.cxx
+
+
+avltree.o: avltree.cxx avltree.h $(HEADERS)
+	$(CC) $(CFLAGS) avltree.cxx
+
+rtree.o: rtree.cxx rtree.h dnmarr.h $(HEADERS)
+	$(CC) $(CFLAGS) rtree.cxx
+
+ttree.o: ttree.cxx ttree.h dnmarr.h $(HEADERS)
+	$(CC) $(CFLAGS) ttree.cxx
+
+array.o: array.cxx array.h $(HEADERS)
+	$(CC) $(CFLAGS) array.cxx
+
+hashtab.o: hashtab.cxx hashtab.h $(HEADERS)
+	$(CC) $(CFLAGS) hashtab.cxx
+
+textobj.o: textobj.cxx textobj.h $(HEADERS)
+	$(CC) $(CFLAGS) textobj.cxx
+
+post_c_api.o: post_c_api.cxx post_c_api.h $(HEADERS)
+	$(CC) $(CFLAGS) post_c_api.cxx
+
+libstorage.a: $(OBJS)
+	$(AR) $(ARFLAGS) libstorage.a $(OBJS)
+
+install: libstorage.a
+	mkdir -p $(INSTALL_LIB_PATH)
+	cp libstorage.a $(INSTALL_LIB_PATH)
+	mkdir -p $(INSTALL_INC_PATH)
+	cp *.h $(INSTALL_INC_PATH)
+
+#
+# Examples
+#
+
+guess.o: guess.cxx $(HEADERS)
+	$(CC) $(CFLAGS) guess.cxx
+
+testtext.o: testtext.cxx textobj.h array.h $(HEADERS)
+	$(CC) $(CFLAGS) testtext.cxx
+
+testtree.o: testtree.cxx avltree.h hashtab.h $(HEADERS)
+	$(CC) $(CFLAGS) testtree.cxx
+
+testspat.o: testspat.cxx rtree.h dnmarr.h hashtab.h $(HEADERS)
+	$(CC) $(CFLAGS) testspat.cxx
+
+testperf.o: testperf.cxx ttree.h dnmarr.h $(HEADERS)
+	$(CC) $(CFLAGS) testperf.cxx
+
+testrans.o: testrans.cxx avltree.h $(HEADERS)
+	$(CC) $(CFLAGS) testrans.cxx
+
+dumpmem.o: dumpmem.cxx $(HEADERS)
+	$(CC) $(CFLAGS) dumpmem.cxx
+
+
+
+guess: guess.o comptime.cxx libstorage.a
+	$(CC) $(LFLAGS) -o guess guess.o comptime.cxx libstorage.a
+
+testtext: testtext.o comptime.cxx libstorage.a
+	$(CC) $(LFLAGS) -o testtext testtext.o comptime.cxx libstorage.a
+
+testtree: testtree.o comptime.cxx libstorage.a
+	$(CC) $(LFLAGS) -o testtree testtree.o comptime.cxx libstorage.a
+
+testspat: testspat.o comptime.cxx libstorage.a
+	$(CC) $(LFLAGS) -o testspat testspat.o comptime.cxx libstorage.a
+
+testperf: testperf.o libstorage.a
+	$(CC) $(LFLAGS) -o testperf testperf.o libstorage.a
+
+testrans: testrans.o comptime.cxx libstorage.a
+	$(CC) $(LFLAGS) -o testrans testrans.o comptime.cxx libstorage.a
+
+dumpmem: dumpmem.o libstorage.a
+	$(CC) $(LFLAGS) -o dumpmem dumpmem.o libstorage.a
+
+
+
+#
+# Service targets
+#
+
+cleanobj:
+	rm -fr *.o core *~ $(EXAMPLES) testrans Templates.DB
+
+cleandbs: 
+	rm -f *.odb *.log *.tmp
+
+clean: cleanobj cleandbs
+
+cleanall: clean
+	rm -f *.a
+
+
+tgz:	cleanall
+	cd ..; tar cvzf post.tgz post
+
+copytgz: tgz
+	mcopy -o ../post.tgz a:
+
+stltest.o: stltest.cxx post_stl.h $(HEADERS)
+	$(CC) $(CFLAGS) -DOS_OMIT_BOOL -I$(OSPACE)/ospace/std -I$(OSPACE) -DUSE_OSPACE_LIBRARY -DREDEFINE_DEFAULT_ALLOCATOR -DNO_NAMESPACES -DOS_NO_ALLOCATORS -DUSE_STD_ALLOCATORS stltest.cxx
+
+stltest: stltest.o libstorage.a 
+	$(CC) $(LFLAGS) -o stltest stltest.o libstorage.a $(OSPACE)/lib/libospace.a
+
+testmap.o: testmap.cxx post_stl.h $(HEADERS)
+	$(CC) $(CFLAGS) -DOS_OMIT_BOOL -I$(OSPACE)/ospace/std -I$(OSPACE) -DUSE_OSPACE_LIBRARY -DREDEFINE_DEFAULT_ALLOCATOR -DNO_NAMESPACES -DOS_NO_ALLOCATORS -DUSE_STD_ALLOCATORS testmap.cxx
+
+testmap: testmap.o libstorage.a 
+	$(CC) $(LFLAGS) -o testmap testmap.o libstorage.a $(OSPACE)/lib/libospace.a
+

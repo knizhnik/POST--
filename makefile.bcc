@@ -1,0 +1,135 @@
+# -*- makefile -*-
+# Makefile for Microsoft Windows with Microsoft Visual C++ 5.0 compiler
+
+CC=bcc32 -P -v
+# Debug version
+#CFLAGS = -c -Od -v -DDEBUG_LEVEL=DEBUG_TRACE 
+
+# Optimized veriosion
+CFLAGS = -c -O2 -5 -DDEBUG_LEVEL=DEBUG_CHECK
+
+# Optimized veriosion with switched off asserts
+#CFLAGS = -c -O2 -5 -v -DNDEBUG
+
+LFLAGS=
+AR=tlib
+ARFLAGS= 
+
+EXAMPLES=guess.exe testtree.exe testtext.exe testspat.exe testrans.exe testperf.exe dumpmem.exe
+
+HEADERS=stdtp.h file.h storage.h classinfo.h object.h
+OBJS=file.obj storage.obj classinfo.obj avltree.obj rtree.obj ttree.obj array.obj hashtab.obj textobj.obj post_c_api.obj
+
+
+all: storage.lib $(EXAMPLES)
+
+
+file.obj: file.cxx $(HEADERS)
+	$(CC) $(CFLAGS) file.cxx
+
+storage.obj: storage.cxx $(HEADERS)
+	$(CC) $(CFLAGS) storage.cxx
+
+classinfo.obj: classinfo.cxx $(HEADERS) 
+	$(CC) $(CFLAGS) classinfo.cxx
+
+avltree.obj: avltree.cxx avltree.h $(HEADERS)
+	$(CC) $(CFLAGS) avltree.cxx
+
+rtree.obj: rtree.cxx rtree.h dnmarr.h $(HEADERS)
+	$(CC) $(CFLAGS) rtree.cxx
+
+ttree.obj: ttree.cxx ttree.h dnmarr.h $(HEADERS)
+	$(CC) $(CFLAGS) ttree.cxx
+
+array.obj: array.cxx array.h $(HEADERS)
+	$(CC) $(CFLAGS) array.cxx
+
+hashtab.obj: hashtab.cxx hashtab.h $(HEADERS)
+	$(CC) $(CFLAGS) hashtab.cxx
+
+textobj.obj: textobj.cxx textobj.h $(HEADERS)
+	$(CC) $(CFLAGS) textobj.cxx
+
+
+post_c_api.obj: post_c_api.cxx  $(HEADERS) post_c_api.h
+	$(CC) $(CFLAGS) post_c_api.cxx
+
+
+storage.lib: $(OBJS)
+	-del storage.lib
+	$(AR) $(ARFLAGS) storage.lib +file.obj +storage.obj +classinfo.obj +avltree.obj +rtree.obj +ttree.obj +array.obj +hashtab.obj +textobj.obj
+
+
+#
+# Examples
+#
+
+guess.obj: guess.cxx $(HEADERS)
+	$(CC) $(CFLAGS) guess.cxx
+
+testtext.obj: testtext.cxx textobj.h array.h $(HEADERS)
+	$(CC) $(CFLAGS) testtext.cxx
+
+testtree.obj: testtree.cxx avltree.h hashtab.h $(HEADERS)
+	$(CC) $(CFLAGS) testtree.cxx
+
+testspat.obj: testspat.cxx rtree.h dnmarr.h hashtab.h $(HEADERS)
+	$(CC) $(CFLAGS) testspat.cxx
+
+testrans.obj: testrans.cxx avltree.h $(HEADERS)
+	$(CC) $(CFLAGS) testrans.cxx
+
+testperf.obj: testperf.cxx ttree.h dnmarr.h $(HEADERS)
+	$(CC) $(CFLAGS) testperf.cxx
+
+dumpmem.obj: dumpmem.cxx $(HEADERS)
+	$(CC) $(CFLAGS) dumpmem.cxx
+
+
+
+guess.exe: guess.obj storage.lib
+	$(CC) $(LFLAGS) guess.obj storage.lib
+
+testtext.exe: testtext.obj storage.lib
+	$(CC) $(LFLAGS) testtext.obj storage.lib
+
+testtree.exe: testtree.obj storage.lib
+	$(CC) $(LFLAGS) testtree.obj storage.lib
+
+testspat.exe: testspat.obj storage.lib
+	$(CC) $(LFLAGS) testspat.obj storage.lib
+
+testperf.exe: testperf.obj storage.lib
+	$(CC) $(LFLAGS) testperf.obj storage.lib
+
+testrans.exe: testrans.obj storage.lib
+	$(CC) $(LFLAGS) testrans.obj storage.lib
+
+dumpmem.exe: dumpmem.obj storage.lib
+	$(CC) $(LFLAGS) dumpmem.obj storage.lib
+
+#
+# Service targets
+#
+
+cleanobj:
+	del *.obj,*.*~,*~,*.pch,*.pdb,*.ilk,*.exe,*.dsp,*.dsw,*.ncb,*.opt,*.plg
+
+cleandbs: 
+	del *.odb,*.log,*.tmp
+
+clean: cleanobj cleandbs
+
+cleanall: clean
+	del *.lib
+
+
+zip: cleanall
+	cd ..
+	del post.zip 
+	zip -r post.zip post
+
+copyzip: zip
+	copy post.zip a:
+
